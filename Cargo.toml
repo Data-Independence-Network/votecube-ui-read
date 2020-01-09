@@ -12,11 +12,16 @@ path = "src/main.rs"
 actix-web = { version = "2" }
 actix-rt = { version = "1" }
 cdrs = { version = "2" }
-#cdrs_helpers_derive = "0.3.0"
+chrono = "0.4"
+cdrs_helpers_derive = "0.3.0"
 env_logger = "0.6"
-lru = "0.4.3"
-#maplit = { version = "1" }
-radix_fmt = "1"
+lru_rs_mem = { path = "../lru-rs-mem" }
+maplit = { version = "1" }
+#radix_fmt = "1"
+serde = "1.0"
+serde_derive = "1.0"
+sysinfo = "0.10.3"
+#tokio = "0.2.6"
 
 [dev-dependencies]
 env_logger = "0.4.3"
