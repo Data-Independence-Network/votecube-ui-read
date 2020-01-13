@@ -33,6 +33,7 @@ use sysinfo::{System, SystemExt};
 type CurrentSession = Session<RoundRobinSync<TcpConnectionPool<StaticPasswordAuthenticator>>>;
 
 type GetOpinionPreparedQuery = PreparedQuery;
+type GetPollPreparedQuery = PreparedQuery;
 type GetThreadPreparedQuery = PreparedQuery;
 
 #[derive(Deserialize)]
@@ -50,10 +51,12 @@ struct Queries {
     poll_opinion_by_ids: Arc<GetOpinionPreparedQuery>,
     poll_opinion_ids_for_poll_period: Arc<GetOpinionPreparedQuery>,
     poll_opinion_ids_for_poll_period_since_create_dt: Arc<GetOpinionPreparedQuery>,
-    poll_thread_by_ids: Arc<GetThreadPreparedQuery>,
+    poll_by_id: Arc<GetThreadPreparedQuery>,
+    poll_thread_by_id: Arc<GetThreadPreparedQuery>,
 }
 
 static THREAD_ID_MASK: u64 = 1 << 63;
+static POLL_ID_MASK: u64 = 1 << 62;
 static OPINION_ID_MASK: u64 = 0;
 
 static EARLIEST_GET_OPINION_IDS_PERIOD: u64 = 1;
@@ -63,6 +66,7 @@ static mut PREVIOUS_DATE: String = String::new();
 
 static mut NUM_GET_OPINION_IDS_REQUESTS: u32 = 0;
 static mut NUM_GET_OPINION_REQUESTS: u32 = 0;
+static mut NUM_GET_POLL_REQUESTS: u32 = 0;
 static mut NUM_GET_THREAD_REQUESTS: u32 = 0;
 
 static mut YESTERDAY_DAY: u32 = 0;
@@ -154,28 +158,28 @@ fn encode_opinion_ids(
     };
     if opinion_id < 256 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..1];
-        byte_mask = 1;
+        byte_mask = 0;
     } else if opinion_id < 65536 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..2];
-        byte_mask = 2;
+        byte_mask = 1;
     } else if opinion_id < 16777216 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..3];
-        byte_mask = 3;
+        byte_mask = 2;
     } else if opinion_id < 4294967296 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..4];
-        byte_mask = 4;
+        byte_mask = 3;
     } else if opinion_id < 1099511627776 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..5];
-        byte_mask = 5;
+        byte_mask = 4;
     } else if opinion_id < 281474976710656 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..6];
-        byte_mask = 6;
+        byte_mask = 5;
     } else if opinion_id < 72057594037927936 {
         opinion_id_significant_bytes = &opinion_id_bytes[0..7];
-        byte_mask = 7;
+        byte_mask = 6;
     } else {
         opinion_id_significant_bytes = &opinion_id_bytes;
-        byte_mask = 8;
+        byte_mask = 7;
     }
 
     let create_es_significant_bytes;
@@ -188,7 +192,7 @@ fn encode_opinion_ids(
         create_es_significant_bytes = &create_es_bytes[0..4];
     } else {
         create_es_significant_bytes = &create_es_bytes[0..5];
-        byte_mask += 16;
+        byte_mask += 8;
     }
 
 //    println!("opinion_id: {}", opinion_id_significant_bytes[0]);
@@ -232,6 +236,7 @@ async fn get_opinion(
             return Ok(HttpResponse::Ok()
                 .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
 //                .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
+                .header("Content-Encoding", "gzip")
                 .body(cache_entry.clone()));
         }
         None => {
@@ -264,7 +269,66 @@ async fn get_opinion(
         Ok(HttpResponse::Ok()
             .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
 //            .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
-//            .header("Content-Encoding", "gzip")
+            .header("Content-Encoding", "gzip")
+            .body(bytes))
+    } else {
+        Ok(HttpResponse::Ok()
+            .header("Cache-Control", "public, max-age=86400")
+            .finish())
+    }
+}
+
+async fn get_poll(
+    _: HttpRequest,
+    path: web::Path<GetThreadParams>,
+    session: web::Data<Arc<CurrentSession>>,
+    queries: web::Data<Arc<Queries>>,
+    cache: web::Data<Arc<Mutex<LruCache>>>,
+) -> Result<HttpResponse, Error> {
+    unsafe {
+        NUM_GET_POLL_REQUESTS += 1;
+    }
+
+    let cache_key = POLL_ID_MASK + path.poll_id;
+
+    match cache.lock().unwrap().get(&cache_key) {
+        Some(cache_entry) => {
+            println!("Found Poll in Cache");
+            return Ok(HttpResponse::Ok()
+                .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
+//                .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
+                .header("Content-Encoding", "gzip")
+                .body(cache_entry.clone()));
+        }
+        None => {
+            // Nothing to do
+        }
+    }
+
+    let values_with_names = query_values! {
+    "poll_id" => path.poll_id
+    };
+
+    let rows = session.exec_with_values(
+        &queries.poll_by_id,
+        values_with_names)
+        .expect("query_with_values")
+        .get_body()
+        .expect("get body")
+        .into_rows()
+        .expect("into rows");
+
+    if rows.len() == 1 {
+        let poll_row: &Row = &rows[0];
+        let blob: Blob = poll_row.by_name("data").expect("data value").unwrap();
+        let bytes = blob.into_vec();
+        cache.lock().unwrap().put(cache_key, bytes.clone());
+
+        Ok(HttpResponse::Ok()
+            // .header("Cache-Control", "public")
+            .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
+//            .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
+            .header("Content-Encoding", "gzip")
             .body(bytes))
     } else {
         Ok(HttpResponse::Ok()
@@ -292,6 +356,7 @@ async fn get_thread(
             return Ok(HttpResponse::Ok()
                 .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
 //                .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
+                .header("Content-Encoding", "gzip")
                 .body(cache_entry.clone()));
         }
         None => {
@@ -304,7 +369,7 @@ async fn get_thread(
     };
 
     let rows = session.exec_with_values(
-        &queries.poll_thread_by_ids,
+        &queries.poll_thread_by_id,
         values_with_names)
         .expect("query_with_values")
         .get_body()
@@ -322,7 +387,7 @@ async fn get_thread(
             // .header("Cache-Control", "public")
             .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
 //            .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
-//            .header("Content-Encoding", "gzip")
+            .header("Content-Encoding", "gzip")
             .body(bytes))
     } else {
         Ok(HttpResponse::Ok()
@@ -358,7 +423,11 @@ async fn main() -> std::io::Result<()> {
         session.prepare_tw("SELECT data from opinions WHERE poll_id = ? AND date = ? AND create_es = ? AND opinion_id = ?", false, false).unwrap()
     );
 
-    let poll_thread_by_ids: Arc<GetThreadPreparedQuery> = Arc::new(
+    let poll_by_id: Arc<GetPollPreparedQuery> = Arc::new(
+        session.prepare_tw("SELECT data from polls WHERE poll_id = ?", false, false).unwrap()
+    );
+
+    let poll_thread_by_id: Arc<GetThreadPreparedQuery> = Arc::new(
         session.prepare_tw("SELECT data from threads WHERE poll_id = ?", false, false).unwrap()
     );
 
@@ -377,7 +446,8 @@ async fn main() -> std::io::Result<()> {
         poll_opinion_by_ids: poll_opinion_by_ids.clone(),
         poll_opinion_ids_for_poll_period: poll_opinion_ids_for_poll_period.clone(),
         poll_opinion_ids_for_poll_period_since_create_dt: poll_opinion_ids_for_poll_period_since_create_dt.clone(),
-        poll_thread_by_ids: poll_thread_by_ids.clone(),
+        poll_by_id: poll_by_id.clone(),
+        poll_thread_by_id: poll_thread_by_id.clone(),
     });
 
     let check_size_cache_ref = cache.clone();
@@ -422,10 +492,12 @@ async fn main() -> std::io::Result<()> {
 //                println!("# Requests");
                 println!("get/opinionIds {}", NUM_GET_OPINION_IDS_REQUESTS);
                 println!("get/opinion    {}", NUM_GET_OPINION_REQUESTS);
+                println!("get/poll       {}", NUM_GET_POLL_REQUESTS);
                 println!("get/thread     {}", NUM_GET_THREAD_REQUESTS);
 
                 NUM_GET_OPINION_IDS_REQUESTS = 0;
                 NUM_GET_OPINION_REQUESTS = 0;
+                NUM_GET_POLL_REQUESTS = 0;
                 NUM_GET_THREAD_REQUESTS = 0;
             }
 
@@ -445,7 +517,6 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-
     HttpServer::new(move || {
         App::new()
             .data(session.clone())
@@ -457,8 +528,9 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/get/opinionIds/{poll_id}/{date}/{create_es}").route(web::get().to(get_opinion_ids)))
             .service(web::resource("/get/opinion/{poll_id}/{date}/{create_es}/{opinion_id}").route(web::get().to(get_opinion)))
             .service(web::resource("/get/thread/{poll_id}").route(web::get().to(get_thread)))
+            .service(web::resource("/get/poll/{poll_id}").route(web::get().to(get_poll)))
     })
-        .bind("127.0.0.1:8443")?
+        .bind("127.0.0.1:8444")?
         .run()
         .await
 }
