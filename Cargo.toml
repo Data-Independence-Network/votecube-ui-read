@@ -15,6 +15,7 @@ cdrs = { version = "2" }
 chrono = "0.4"
 cdrs_helpers_derive = "0.3.0"
 env_logger = "0.6"
+job_scheduler = "1.1.0"
 lru_rs_mem = { path = "../lru-rs-mem" }
 maplit = { version = "1" }
 #radix_fmt = "1"
