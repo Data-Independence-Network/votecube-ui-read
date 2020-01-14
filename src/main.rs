@@ -195,6 +195,7 @@ fn encode_opinion_ids(
 fn encode_id(
     id: u64
 ) -> EncodedId {
+//    print!("{}, ", id);
     let byte_mask: u8;
     let id_bytes: [u8; 8] = unsafe {
         // Poll Id in the period of a given time zone
@@ -228,6 +229,7 @@ fn encode_id(
         num_bytes = 8;
         byte_mask = 7;
     }
+//    println!("num_bytes: {}, byte_mask: {}, ", num_bytes, byte_mask);
 
     return EncodedId {
         byte_mask,
@@ -324,7 +326,7 @@ async fn get_poll(
 
     match cache.lock().unwrap().get(&cache_key) {
         Some(cache_entry) => {
-            println!("Found Poll in Cache");
+//            println!("Found Poll in Cache");
             return Ok(HttpResponse::Ok()
                 .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
 //                .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
@@ -444,22 +446,26 @@ fn encode_poll_ids(
     mut response: Vec<u8>,
 ) -> Vec<u8> {
     let num_poll_ids_remainder = poll_ids.len() % 2;
-    let num_poll_id_pairs = poll_ids.len() - num_poll_ids_remainder;
-    for _i in 0..num_poll_id_pairs {
-        let index = num_poll_id_pairs * 2;
+    let num_poll_id_pairs = (poll_ids.len() - num_poll_ids_remainder) / 2;
+    for i in 0..num_poll_id_pairs {
+        let index = i * 2;
         let encoded_id_1 = encode_id(poll_ids[index]);
         let encoded_id_2 = encode_id(poll_ids[index + 1]);
-        let byte_mask = encoded_id_1.byte_mask << 3 + encoded_id_2.byte_mask;
+        let byte_mask = (encoded_id_1.byte_mask << 3) + encoded_id_2.byte_mask;
+//        println!("byte_mask2: {}", byte_mask);
         response.extend_from_slice(&[byte_mask]);
         response.extend_from_slice(&encoded_id_1.id_bytes[0..encoded_id_1.num_bytes]);
         response.extend_from_slice(&encoded_id_2.id_bytes[0..encoded_id_2.num_bytes]);
     }
     if num_poll_ids_remainder == 1 {
         let encoded_id_remainder = encode_id(poll_ids[poll_ids.len() - 1]);
-        let byte_mask = 64 + encoded_id_remainder.byte_mask;
+        let byte_mask = 64 + (encoded_id_remainder.byte_mask << 3);
+//        println!("byte_mask:  {}", byte_mask);
         response.extend_from_slice(&[byte_mask]);
         response.extend_from_slice(&encoded_id_remainder.id_bytes[0..encoded_id_remainder.num_bytes]);
     }
+
+//    println!("");
 
     return response;
 }
@@ -528,11 +534,12 @@ fn reset_dates() {
         let mut date = Utc::now();
         for i in 0..7 {
             DATES[i] = format!(
-                "{}-{:02}-{:02}",
+                "{}{:02}{:02}",
                 date.year(),
                 date.month(),
                 date.day(),
             );
+//            println!("DATE[{}]: {}", i, DATES[i]);
             date = date - chrono::Duration::days(1);
         }
     }
@@ -543,11 +550,21 @@ fn check_mem_print_stats(
     system: &mut System,
 ) {
     unsafe {
-        println!("get/opinion       {}", NUM_GET_OPINION_REQUESTS);
-        println!("get/poll          {}", NUM_GET_POLL_REQUESTS);
-        println!("get/thread        {}", NUM_GET_THREAD_REQUESTS);
-        println!("list/opinions     {}", NUM_LIST_OPINIONS_REQUESTS);
-        println!("list/polls/recent {}", NUM_LIST_RECENT_POLLS_REQUESTS);
+        if NUM_GET_OPINION_REQUESTS > 0 {
+            println!("get/opinion       {}", NUM_GET_OPINION_REQUESTS);
+        }
+        if NUM_GET_POLL_REQUESTS > 0 {
+            println!("get/poll          {}", NUM_GET_POLL_REQUESTS);
+        }
+        if NUM_GET_THREAD_REQUESTS > 0 {
+            println!("get/thread        {}", NUM_GET_THREAD_REQUESTS);
+        }
+        if NUM_LIST_OPINIONS_REQUESTS > 0 {
+            println!("list/opinions     {}", NUM_LIST_OPINIONS_REQUESTS);
+        }
+        if NUM_LIST_RECENT_POLLS_REQUESTS > 0 {
+            println!("list/polls/recent {}", NUM_LIST_RECENT_POLLS_REQUESTS);
+        }
 
         NUM_GET_OPINION_REQUESTS = 0;
         NUM_GET_POLL_REQUESTS = 0;
