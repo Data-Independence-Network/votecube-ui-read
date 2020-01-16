@@ -159,6 +159,7 @@ async fn list_opinions(
 
     return Ok(HttpResponse::Ok()
         .header("Cache-Control", "public, max-age=60")
+//        .header("Transfer-Encoding", "identity")
         .body(response));
 }
 
@@ -512,16 +513,24 @@ async fn get_thread(
 
     if rows.len() == 1 {
         let thread_row: &Row = &rows[0];
-        let blob: Blob = thread_row.by_name("data").expect("data value").unwrap();
-        let bytes = blob.into_vec();
-        cache.lock().unwrap().put(cache_key, bytes.clone());
-
-        Ok(HttpResponse::Ok()
-            // .header("Cache-Control", "public")
-            .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
-//            .header("Expires", "Wed, 22 Oct 2025 07:28:00 GMT")
-            .header("Content-Encoding", "gzip")
-            .body(bytes))
+        let response;
+        let blob_option: Option<Blob> = thread_row.by_name("data").expect("data value");
+        match blob_option {
+            Some(data) => {
+                let bytes = data.into_vec();
+                cache.lock().unwrap().put(cache_key, bytes.clone());
+                response = HttpResponse::Ok()
+                    .header("Cache-Control", "public, max-age=86400") // By default cache for 1 day
+                    .header("Content-Encoding", "gzip")
+                    .body(bytes);
+            }
+            None => {
+                response = HttpResponse::Ok()
+                    .header("Cache-Control", "public, max-age=86400")
+                    .finish();
+            }
+        }
+        Ok(response)
     } else {
         Ok(HttpResponse::Ok()
             .header("Cache-Control", "public, max-age=86400")
