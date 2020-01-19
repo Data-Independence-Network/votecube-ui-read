@@ -1,13 +1,11 @@
 #[macro_use]
 extern crate cdrs;
-#[macro_use]
 extern crate cdrs_helpers_derive;
 extern crate chrono;
 extern crate job_scheduler;
 extern crate lru_rs_mem;
 extern crate sysinfo;
 
-use std::mem::transmute;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
@@ -19,20 +17,17 @@ use actix_web::{App, Error, HttpRequest, HttpResponse, HttpServer, Result, web};
 use cdrs::authenticators::StaticPasswordAuthenticator;
 use cdrs::cluster::{ClusterTcpConfig, NodeTcpConfigBuilder, TcpConnectionPool};
 use cdrs::cluster::session::{new as new_session, Session};
-use cdrs::frame::IntoBytes;
 use cdrs::frame::TryFromRow;
 use cdrs::load_balancing::RoundRobinSync;
 use cdrs::query::*;
 use cdrs::types::ByName;
-use cdrs::types::from_cdrs::FromCDRSByName;
 use cdrs::types::prelude::*;
-use chrono::{Datelike,
-//             DateTime, NaiveDateTime,
-             Utc};
+use chrono::{Datelike, Timelike, Utc};
 use job_scheduler::{Job, JobScheduler};
 use lru_rs_mem::LruCache;
 use serde_derive::Deserialize;
 use sysinfo::{System, SystemExt};
+use votecube_rust_lib::{encode_opinion_ids, encode_poll_ids, OpinionIdsStruct, PollIdStruct};
 
 type CurrentSession = Session<RoundRobinSync<TcpConnectionPool<StaticPasswordAuthenticator>>>;
 
@@ -43,23 +38,6 @@ type GetThreadPreparedQuery = PreparedQuery;
 #[derive(Deserialize)]
 struct GetThreadParams {
     poll_id: u64,
-}
-
-#[derive(Clone, Debug, IntoCDRSValue, TryFromRow, PartialEq)]
-struct OpinionIdsStruct {
-    opinion_id: i64,
-    create_es: i64,
-}
-
-#[derive(Clone, Debug, IntoCDRSValue, TryFromRow, PartialEq)]
-struct PollIdStruct {
-    poll_id: i64,
-}
-
-struct EncodedId {
-    byte_mask: u8,
-    id_bytes: [u8; 8],
-    num_bytes: usize,
 }
 
 struct Queries {
@@ -77,7 +55,7 @@ static OPINION_ID_MASK: u64 = 0;
 
 static EARLIEST_LIST_OPINIONS_PERIOD: u64 = 1;
 
-static mut DATES: [String; 7] = [
+static mut DATE_HOURS: [String; 7] = [
     String::new(),
     String::new(),
     String::new(),
@@ -93,7 +71,7 @@ static mut NUM_GET_OPINION_REQUESTS: u32 = 0;
 static mut NUM_GET_POLL_REQUESTS: u32 = 0;
 static mut NUM_GET_THREAD_REQUESTS: u32 = 0;
 
-static OPINION_IDS_ROW_RESPONSE_MAX_SIZE_BYTES: usize = 11;
+static OPINION_IDS_ROW_RESPONSE_MAX_SIZE_BYTES: usize = 12;
 static POLL_IDS_ROW_RESPONSE_MAX_SIZE_BYTES: usize = 11;
 
 async fn list_opinions(
@@ -119,7 +97,7 @@ async fn list_opinions(
 
     let query_date;
     unsafe {
-        query_date = DATES[path.1 as usize].clone();
+        query_date = DATE_HOURS[path.1 as usize].clone();
     }
 
     let values_with_names: QueryValues;
@@ -163,82 +141,6 @@ async fn list_opinions(
         .body(response));
 }
 
-fn encode_opinion_ids(
-    opinion_ids_row: &OpinionIdsStruct,
-    mut response: Vec<u8>,
-) -> Vec<u8> {
-    let encoded_id = encode_id(opinion_ids_row.opinion_id as u64);
-    let mut byte_mask = encoded_id.byte_mask;
-
-    let create_es_significant_bytes;
-    let create_es = opinion_ids_row.create_es as u64;
-    let create_es_bytes: [u8; 8] = unsafe {
-        // Poll Id in the period of a given time zone
-        transmute(create_es)
-    };
-    if create_es < 4294967296 {
-        create_es_significant_bytes = &create_es_bytes[0..4];
-    } else {
-        create_es_significant_bytes = &create_es_bytes[0..5];
-        byte_mask += 8;
-    }
-
-//    println!("opinion_id: {}", opinion_id_significant_bytes[0]);
-//    println!("create_es: {}", u32::from_ne_bytes(clone_into_array(create_es_significant_bytes)));
-
-    response.extend_from_slice(&[byte_mask]);
-    response.extend_from_slice(&encoded_id.id_bytes[0..encoded_id.num_bytes]);
-    response.extend_from_slice(create_es_significant_bytes);
-
-    return response;
-}
-
-fn encode_id(
-    id: u64
-) -> EncodedId {
-//    print!("{}, ", id);
-    let byte_mask: u8;
-    let id_bytes: [u8; 8] = unsafe {
-        // Poll Id in the period of a given time zone
-        transmute(id)
-    };
-
-    let num_bytes: usize;
-
-    if id < 256 {
-        num_bytes = 1;
-        byte_mask = 0;
-    } else if id < 65536 {
-        num_bytes = 2;
-        byte_mask = 1;
-    } else if id < 16777216 {
-        num_bytes = 3;
-        byte_mask = 2;
-    } else if id < 4294967296 {
-        num_bytes = 4;
-        byte_mask = 3;
-    } else if id < 1099511627776 {
-        num_bytes = 5;
-        byte_mask = 4;
-    } else if id < 281474976710656 {
-        num_bytes = 6;
-        byte_mask = 5;
-    } else if id < 72057594037927936 {
-        num_bytes = 7;
-        byte_mask = 6;
-    } else {
-        num_bytes = 8;
-        byte_mask = 7;
-    }
-//    println!("num_bytes: {}, byte_mask: {}, ", num_bytes, byte_mask);
-
-    return EncodedId {
-        byte_mask,
-        id_bytes,
-        num_bytes,
-    };
-}
-
 //use std::convert::AsMut;
 //
 //fn clone_into_array<A, T>(slice: &[T]) -> A
@@ -253,7 +155,7 @@ fn encode_id(
 
 async fn get_opinion(
     _: HttpRequest,
-    path: web::Path<(u64, String, u64, u64)>,
+    path: web::Path<(u64, String, u64, u64, u16)>,
     session: web::Data<Arc<CurrentSession>>,
     queries: web::Data<Arc<Queries>>,
     cache: web::Data<Arc<Mutex<LruCache>>>,
@@ -283,6 +185,8 @@ async fn get_opinion(
     "date" => path.1.clone(),
     "create_es" => path.2,
     "opinion_id" => path.3
+    // Note version is not used in the query, its only there for caching purposes
+    // if a version of an opinion updates then it will be a different URL
     };
 
     let rows = session.exec_with_values(
@@ -385,16 +289,16 @@ async fn list_recent_polls(
         NUM_LIST_RECENT_POLLS_REQUESTS += 1;
     }
 
-    let query_date_0;
-    let query_date_1;
+    let query_date_hour_0;
+    let query_date_hour_1;
     unsafe {
-        query_date_0 = DATES[0].clone();
-        query_date_1 = DATES[1].clone();
+        query_date_hour_0 = DATE_HOURS[0].clone();
+        query_date_hour_1 = DATE_HOURS[1].clone();
     }
 
     let query = &queries.recent_poll_ids_globally;
     let mut values_with_names = query_values! {
-    "date" => query_date_0
+    "date" => query_date_hour_0
     };
 
     let mut rows = session.exec_with_values(
@@ -409,7 +313,7 @@ async fn list_recent_polls(
     if rows.len() < 200 {
         println!("Querying for yesterdays most recent poll ids");
         values_with_names = query_values! {
-        "date" => query_date_1
+        "date" => query_date_hour_1
         };
         let mut rows1 = session.exec_with_values(
             query,
@@ -440,35 +344,6 @@ async fn list_recent_polls(
     return Ok(HttpResponse::Ok()
         .header("Cache-Control", "public, max-age=60")
         .body(response));
-}
-
-fn encode_poll_ids(
-    poll_ids: &Vec<u64>,
-    mut response: Vec<u8>,
-) -> Vec<u8> {
-    let num_poll_ids_remainder = poll_ids.len() % 2;
-    let num_poll_id_pairs = (poll_ids.len() - num_poll_ids_remainder) / 2;
-    for i in 0..num_poll_id_pairs {
-        let index = i * 2;
-        let encoded_id_1 = encode_id(poll_ids[index]);
-        let encoded_id_2 = encode_id(poll_ids[index + 1]);
-        let byte_mask = (encoded_id_1.byte_mask << 3) + encoded_id_2.byte_mask;
-//        println!("byte_mask2: {}", byte_mask);
-        response.extend_from_slice(&[byte_mask]);
-        response.extend_from_slice(&encoded_id_1.id_bytes[0..encoded_id_1.num_bytes]);
-        response.extend_from_slice(&encoded_id_2.id_bytes[0..encoded_id_2.num_bytes]);
-    }
-    if num_poll_ids_remainder == 1 {
-        let encoded_id_remainder = encode_id(poll_ids[poll_ids.len() - 1]);
-        let byte_mask = 64 + (encoded_id_remainder.byte_mask << 3);
-//        println!("byte_mask:  {}", byte_mask);
-        response.extend_from_slice(&[byte_mask]);
-        response.extend_from_slice(&encoded_id_remainder.id_bytes[0..encoded_id_remainder.num_bytes]);
-    }
-
-//    println!("");
-
-    return response;
 }
 
 async fn get_thread(
@@ -538,18 +413,19 @@ async fn get_thread(
     }
 }
 
-fn reset_dates() {
+fn reset_date_hours() {
     unsafe {
         let mut date = Utc::now();
         for i in 0..7 {
-            DATES[i] = format!(
-                "{}{:02}{:02}",
+            DATE_HOURS[i] = format!(
+                "{}{:02}{:02}{:02}",
                 date.year(),
                 date.month(),
                 date.day(),
+                date.hour(),
             );
 //            println!("DATE[{}]: {}", i, DATES[i]);
-            date = date - chrono::Duration::days(1);
+            date = date - chrono::Duration::hours(1);
         }
     }
 }
@@ -611,19 +487,19 @@ async fn main() -> std::io::Result<()> {
     session.query("USE votecube;").expect("USE Keyspace error");
 
     let poll_opinion_ids_for_poll_period: Arc<GetOpinionPreparedQuery> = Arc::new(
-        session.prepare_tw("SELECT opinion_id, create_es from opinions WHERE poll_id = ? AND date = ? BYPASS CACHE", false, false).unwrap()
+        session.prepare_tw("SELECT opinion_id, create_es, version from opinion_ids WHERE poll_id = ? AND create_hour = ? BYPASS CACHE", false, false).unwrap()
     );
 
     let poll_opinion_ids_for_poll_period_since_create_dt: Arc<GetOpinionPreparedQuery> = Arc::new(
-        session.prepare_tw("SELECT opinion_id, create_es from opinions WHERE poll_id = ? AND date = ? AND create_es >= ? BYPASS CACHE", false, false).unwrap()
+        session.prepare_tw("SELECT opinion_id, create_es, version from opinion_ids WHERE poll_id = ? AND create_hour = ? AND create_es >= ? BYPASS CACHE", false, false).unwrap()
     );
 
     let poll_opinion_by_ids: Arc<GetOpinionPreparedQuery> = Arc::new(
-        session.prepare_tw("SELECT data from opinions WHERE poll_id = ? AND date = ? AND create_es = ? AND opinion_id = ?", false, false).unwrap()
+        session.prepare_tw("SELECT data from opinions WHERE poll_id = ? AND create_hour = ? AND create_es = ? AND opinion_id = ?", false, false).unwrap()
     );
 
     let recent_poll_ids_globally: Arc<GetPollPreparedQuery> = Arc::new(
-        session.prepare_tw("SELECT poll_id from poll_chronology WHERE date = ? ORDER BY create_es DESC LIMIT 1000 BYPASS CACHE", false, false).unwrap()
+        session.prepare_tw("SELECT poll_id from poll_chronology WHERE create_hour = ? ORDER BY create_es DESC LIMIT 1000 BYPASS CACHE", false, false).unwrap()
     );
 
     let poll_by_id: Arc<GetPollPreparedQuery> = Arc::new(
@@ -662,12 +538,12 @@ async fn main() -> std::io::Result<()> {
 //        seconds_since_epoch as i64 - 24 * 60 * 60, 0);
 //    let utc_yesterday: DateTime<Utc> = DateTime::from_utc(naive_yesterday_same_time, Utc);
 
-    reset_dates();
+    reset_date_hours();
     thread::spawn(move || {
         let mut system = System::new();
         let mut scheduler = JobScheduler::new();
-        scheduler.add(Job::new("0 0 * * * *".parse().unwrap(), || {
-            reset_dates();
+        scheduler.add(Job::new("0 * * * * *".parse().unwrap(), || {
+            reset_date_hours();
         }));
         scheduler.add(Job::new("1/10 * * * * *".parse().unwrap(), || {
             check_mem_print_stats(&lru_cache_ref, &mut system);
@@ -686,7 +562,7 @@ async fn main() -> std::io::Result<()> {
 // enable logger
 //            .wrap(middleware::Logger::default())
             .service(web::resource("/").to(|| async { "votecube-ui-read" }))
-            .service(web::resource("/get/opinion/{poll_id}/{date}/{create_es}/{opinion_id}").route(web::get().to(get_opinion)))
+            .service(web::resource("/get/opinion/{poll_id}/{date}/{create_es}/{opinion_id}/{version}").route(web::get().to(get_opinion)))
             .service(web::resource("/get/thread/{poll_id}").route(web::get().to(get_thread)))
             .service(web::resource("/get/poll/{poll_id}").route(web::get().to(get_poll)))
             .service(web::resource("/list/opinions/{poll_id}/{period}/{create_es}").route(web::get().to(list_opinions)))

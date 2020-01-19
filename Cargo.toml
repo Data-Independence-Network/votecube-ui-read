@@ -12,8 +12,8 @@ path = "src/main.rs"
 actix-web = { version = "2" }
 actix-rt = { version = "1" }
 cdrs = { version = "2" }
-chrono = "0.4"
 cdrs_helpers_derive = "0.3.0"
+chrono = "0.4"
 env_logger = "0.6"
 job_scheduler = "1.1.0"
 lru_rs_mem = { path = "../lru-rs-mem" }
@@ -22,6 +22,7 @@ maplit = { version = "1" }
 serde = "1.0"
 serde_derive = "1.0"
 sysinfo = "0.10.3"
+votecube_rust_lib = { path = "../votecube-rust-lib" }
 #tokio = "0.2.6"
 
 [dev-dependencies]
