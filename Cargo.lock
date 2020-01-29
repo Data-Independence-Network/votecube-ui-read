@@ -1707,7 +1707,6 @@ dependencies = [
  "actix-web 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cdrs 2.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "cdrs_helpers_derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "chrono 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "job_scheduler 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1725,6 +1724,7 @@ version = "0.1.0"
 dependencies = [
  "cdrs 2.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "cdrs_helpers_derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "chrono 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
