@@ -25,8 +25,8 @@ use job_scheduler::{Job, JobScheduler};
 use lru_rs_mem::LruCache;
 use serde_derive::Deserialize;
 use sysinfo::{System, SystemExt};
-use votecube_rust_lib::{encode_opinion_ids, encode_root_opinion_ids,
-                        encode_poll_ids, get_partition_periods,
+use votecube_rust_lib::{encode_opinion_ids, encode_poll_ids,
+                        encode_root_opinion_ids, get_partition_periods,
                         OpinionIdsStruct, PollIdStruct, RootOpinionIdsStruct};
 
 type CurrentSession =
@@ -487,8 +487,11 @@ async fn list_recent_polls(
     }
 
     let query = &queries.get_period_poll_id_block_by_theme;
+    // TODO: wire in input parameters
     let mut values_with_names = query_values! {
-    "date" => query_date_hour_0
+    "partition_period" => query_date_hour_0,
+    "age_suitability" => 0,
+    "theme_id" => 0
     };
 
     let mut rows = session.exec_with_values(
@@ -616,8 +619,8 @@ async fn main() -> std::io::Result<()> {
 
     let get_period_poll_id_block_by_theme: Arc<GetPollPreparedQuery> = Arc::new(
         session.prepare_tw(
-            format!("{}{}","SELECT poll_ids from period_poll_id_blocks_by_theme ",
-                "WHERE partition_period = ? AND age_suitability = ? AND theme_id = ?"),
+            format!("{}{}", "SELECT poll_ids from period_poll_id_blocks_by_theme ",
+                    "WHERE partition_period = ? AND age_suitability = ? AND theme_id = ?"),
             false, false).unwrap()
     );
 
@@ -634,16 +637,16 @@ async fn main() -> std::io::Result<()> {
     let list_opinion_ids_for_root_opinion_n_partition_period: Arc<GetOpinionPreparedQuery>
         = Arc::new(
         session.prepare_tw(
-            format!("{}{}","SELECT opinion_id, version from period_opinion_ids ",
-                "WHERE root_opinion_id = ? AND partition_period = ?"),
+            format!("{}{}", "SELECT opinion_id, version from period_opinion_ids ",
+                    "WHERE root_opinion_id = ? AND partition_period = ?"),
             false, false).unwrap()
     );
 
     let list_opinion_update_ids_for_root_opinion_n_partition_period: Arc<GetOpinionPreparedQuery>
         = Arc::new(
         session.prepare_tw(
-            format!("{}{}","SELECT opinion_id, version from opinion_updates ",
-                "WHERE root_opinion_id = ? AND partition_period = ?"),
+            format!("{}{}", "SELECT opinion_id, version from opinion_updates ",
+                    "WHERE root_opinion_id = ? AND partition_period = ?"),
             false, false).unwrap()
     );
     /*
@@ -723,7 +726,6 @@ async fn main() -> std::io::Result<()> {
             .data(lru_cache.clone())
 // enable logger
 //            .wrap(middleware::Logger::default())
-            .service(web::resource("/").to(|| async { "votecube-ui-read" }))
             .service(web::resource("/get/opinion/{opinion_id}/{version}")
                 .route(web::get().to(get_opinion)))
             .service(web::resource("/get/poll/{poll_id}")
